@@ -157,6 +157,15 @@ Lawyers and firms lose time organizing case files, extracting facts from documen
 - `Docker Compose` for local dev; `Cloud Run` or `Render` for API and worker; managed Postgres and object storage for production.
 - Justification: managed services reduce ops overhead inside a 2-week window.
 
+### Legal Corpus Storage Strategy
+- For scraped legal corpus, use a hybrid model instead of choosing only relational or only non-relational storage.
+- Keep raw scraped artifacts in `S3-compatible object storage` as a lightweight `data lake` layer: original HTML, PDF, JSON extraction results, OCR outputs, parsing logs, and reprocessing snapshots.
+- Keep normalized operational metadata, citation registry, ingestion status, and traceability in `PostgreSQL`.
+- Keep vectorized retrieval data in `pgvector` so corpus search and transactional consistency remain in the same operational database for MVP.
+- Justification: legal scraping produces heterogeneous, evolving, and reprocessable raw inputs, while the product also requires strict referential integrity, citation verification, and auditable lineage.
+- Decision: for MVP, do not introduce a separate document database; `JSONB` columns plus object storage cover variable scraper payloads with lower operational complexity.
+- Scaling path: if corpus volume grows enough to make reprocessing, analytics, or batch enrichment expensive in the MVP stack, evolve the object storage layer into a formal `data lake/lakehouse` before adding a separate NoSQL database.
+
 ### Security Architecture
 - JWT-based auth with refresh tokens.
 - RBAC plus per-case ACL enforcement on every read and write path.
@@ -168,39 +177,36 @@ Lawyers and firms lose time organizing case files, extracting facts from documen
 
 ## Database Design
 
+### Recommended Persistence Model For Scraped Legal Data
+- `Relational core`: best fit for `cases`, `users`, `documents`, `analyses`, `citations`, corpus source registry, ingestion jobs, and audit events because those domains need constraints, joins, lineage, and verifiable references.
+- `Non-relational/raw layer`: useful for unstructured scraper outputs, parser payloads, OCR responses, and intermediate enrichment artifacts, but better stored in object storage than in a standalone NoSQL engine during MVP.
+- `Why not fully NoSQL`: the legal product depends on exact source resolution, corpus versioning, deduplication, and citation verification; those requirements are easier and safer to enforce in a relational model.
+- `Why not relational only`: storing every raw scrape artifact inside operational tables would increase storage cost, schema churn, and reprocessing friction.
+- Final recommendation: use `PostgreSQL` as the primary database, `pgvector` for semantic retrieval, and object storage as the raw corpus lake. Add a dedicated NoSQL database only if future scraper throughput or enrichment workloads clearly exceed what `PostgreSQL + JSONB + object storage` can support.
+
 ### Tables, Columns, Relationships, Constraints, Indexes
 
 #### `users`
-- Columns: `id`, `email unique`, `password_hash`, `role`, `firm_id null`, `status`, `created_at`
+- Columns: `user_id`,`full_name`,`professional_card`, `email unique`, `password_hash`, `role`, `firm_id null`, `status`, `created_at`
 - Relationships: many-to-one with `firms`
 - Indexes: `email unique`, `(firm_id, role)`
 
 #### `firms`
-- Columns: `id`, `name`, `created_at`
+- Columns: `firm_id`, `name`, `created_at`, `user_id`
 - Relationships: one-to-many with `users`, optional ownership relation with `cases`
 - Indexes: `name`
 
 #### `cases`
-- Columns: `id`, `owner_user_id`, `owner_firm_id null`, `name`, `legal_area`, `status`, `description null`, `created_at`, `updated_at`, `archived_at null`
+- Columns: `case_id`, `user_id`, `firm_id null`, `name`, `legal_area`, `status`, `description null`, `created_at`, `updated_at`, `is_public`
 - Constraints: `name` and `legal_area` not null (`RN-002`)
 - Relationships: one-to-many with `documents`, `analyses`, `conversations`, `generated_documents`, `audit_events`, `case_access`
-- Indexes: `(owner_user_id, status)`, `(owner_firm_id, status)`
-
-#### `case_access`
-- Columns: `id`, `case_id`, `granted_to_user_id`, `permission`, `granted_by_user_id`, `created_at`
-- Constraints: `permission` enum `read|read_write` (`RN-036`)
-- Indexes: `(case_id, granted_to_user_id)`
+- Indexes: `(user_id, status)`, `(firm_id, status)`
 
 #### `documents`
-- Columns: `id`, `case_id`, `current_version_id null`, `original_filename`, `file_type`, `file_size_bytes`, `status`, `is_password_protected`, `quality_score null`, `created_at`
+- Columns: `doc_id`, `case_id`, `original_filename`, `file_type`, `file_size_bytes`,  `created_at`
 - Constraints: `file_type` limited to `pdf|doc|docx|txt` (`RN-006`)
 - Relationships: one-to-many with `document_versions`, `knowledge_chunks`
 - Indexes: `(case_id, status)`
-
-#### `document_versions`
-- Columns: `id`, `document_id`, `version_number`, `storage_key`, `checksum`, `uploaded_by_user_id`, `created_at`
-- Constraints: unique `(document_id, version_number)`
-- Indexes: `(document_id, version_number)`
 
 #### `knowledge_chunks`
 - Columns: `id`, `case_id`, `document_id`, `document_version_id`, `chunk_index`, `chunk_text`, `embedding vector`, `source_page null`, `source_span_start null`, `source_span_end null`, `created_at`
@@ -209,12 +215,18 @@ Lawyers and firms lose time organizing case files, extracting facts from documen
 
 #### `legal_corpus_sources`
 - Columns: `id`, `source_type`, `title`, `citation_text`, `jurisdiction`, `external_ref`, `publication_date`, `corpus_version`, `storage_key`, `is_active`
+- Optional columns for scraping pipeline: `source_url`, `content_hash`, `scraped_at`, `parser_version`, `raw_payload_jsonb`
 - Indexes: `(source_type, corpus_version)`, `(external_ref)`
 
 #### `legal_corpus_chunks`
 - Columns: `id`, `source_id`, `chunk_index`, `chunk_text`, `embedding vector`, `created_at`
 - Relationships: many-to-one with `legal_corpus_sources`
 - Indexes: `(source_id, chunk_index)`, `ivfflat (embedding vector_cosine_ops)`
+
+#### `corpus_ingestion_runs`
+- Columns: `id`, `source_id`, `status`, `scraper_name`, `started_at`, `finished_at null`, `raw_storage_key`, `normalized_storage_key null`, `error_message null`, `stats_jsonb`
+- Relationships: many-to-one with `legal_corpus_sources`
+- Indexes: `(source_id, started_at desc)`, `(status, started_at desc)`
 
 #### `analyses`
 - Columns: `id`, `case_id`, `status`, `summary`, `normative_framework`, `jurisprudence`, `legal_strategy`, `warnings_risks`, `corpus_version`, `disclaimer_text`, `created_by_user_id`, `credit_ledger_id null`, `created_at`, `completed_at null`, `failure_reason null`
@@ -257,6 +269,15 @@ Lawyers and firms lose time organizing case files, extracting facts from documen
 #### `credit_ledger`
 - Columns: `id`, `user_id`, `operation_type`, `delta`, `status`, `related_resource_type`, `related_resource_id`, `created_at`
 - Indexes: `(user_id, created_at desc)`, `(related_resource_type, related_resource_id)`
+
+
+
+### Relational Entity Model
+
+![Relational Entity Model](<./WhatsApp Image 2026-06-17 at 18.45.40.jpeg>)
+
+
+
 
 ## API Design
 
