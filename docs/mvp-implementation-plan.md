@@ -282,20 +282,33 @@ Lawyers and firms lose time organizing case files, extracting facts from documen
 ## API Design
 
 ### REST Endpoints
+
+#### Auth
 - `POST /auth/register`
 - `POST /auth/login`
 - `POST /auth/refresh`
+- `POST /auth/password-recovery`
+- `POST /auth/password-reset`
+
+#### superadmin view
+
+- `GET /users`
+- `POST /users`
+- `PATCH /users`
+- `DELETE /users`
+
+#### users view
+
 - `GET /cases`
 - `POST /cases`
 - `GET /cases/{id}`
 - `PATCH /cases/{id}`
-- `POST /cases/{id}/archive`
-- `POST /cases/{id}/close`
+
 - `POST /cases/{id}/documents`
 - `GET /cases/{id}/documents`
 - `GET /documents/{id}`
-- `GET /documents/{id}/versions`
-- `POST /documents/{id}/reprocess`
+
+## Analysis Endpoints
 - `POST /cases/{id}/analysis`
 - `GET /cases/{id}/analyses`
 - `GET /analyses/{id}`
@@ -310,20 +323,6 @@ Lawyers and firms lose time organizing case files, extracting facts from documen
 - `GET /cases/{id}/access`
 - `GET /cases/{id}/history`
 
-### Request Schemas
-- `CreateCase`: `{ "name": "Despido Juan Perez", "legal_area": "Laboral", "description": "optional" }`
-- `UploadDocument`: multipart file + `{ "case_id": "uuid" }`
-- `RunAnalysis`: `{ "case_id": "uuid", "question": "optional focus", "force_refresh": false }`
-- `ChatMessage`: `{ "content": "...20-2000 chars...", "case_id": "uuid|null" }`
-- `ShareCase`: `{ "granted_to_user_id": "uuid", "permission": "read|read_write" }`
-- `GenerateDraft`: `{ "analysis_id": "uuid", "custom_instructions": "optional" }`
-
-### Response Schemas
-- `Case`: `{ "id", "name", "legal_area", "status", "owner", "created_at" }`
-- `Document`: `{ "id", "status", "file_type", "version_count", "quality_score" }`
-- `Analysis`: `{ "id", "status", "sections": { "summary", "normative_framework", "jurisprudence", "legal_strategy", "warnings_risks" }, "citations": [...], "corpus_version", "disclaimer", "created_at" }`
-- `ChatAnswer`: `{ "message_id", "answer", "citations": [...], "linked_case_id": "uuid|null" }`
-- `GeneratedDocument`: `{ "id", "type", "status", "content", "export_urls": { "pdf": null, "docx": null } }`
 
 ### Error Responses
 - `400` validation error: unsupported format, size limit, question length, missing required fields.

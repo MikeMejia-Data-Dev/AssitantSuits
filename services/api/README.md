@@ -22,3 +22,16 @@ Suggested substructure:
 - `app/repositories`
 - `app/workers`
 - `tests`
+
+Implemented starter:
+- `app/main.py`
+- `app/api/routes/auth.py`
+- `app/services/auth_service.py`
+- `tests/test_auth_password_recovery.py`
+
+Run locally:
+
+```bash
+uvicorn app.main:app --app-dir services/api --reload
+pytest services/api/tests
+```

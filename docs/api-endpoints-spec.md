@@ -18,6 +18,12 @@ It is intended for:
 - All IDs are `UUID`
 - All timestamps are `ISO 8601`
 
+## Role Mapping
+
+- `role_id = 1`: super admin
+- `role_id = 2`: firm admin
+- `role_id = 3`: lawyer or firm member
+
 ## Common Error Model
 
 ```json
@@ -56,7 +62,8 @@ Creates a new user account.
   "email": "user@example.com",
   "password": "StrongPassword123",
   "full_name": "Juan Perez",
-  "firm_invite_code": null
+  "professional_card": "1234567",
+  "role_id": 2
 }
 ```
 
@@ -65,11 +72,13 @@ Creates a new user account.
 ```json
 {
   "user": {
-    "id": "uuid",
+    "user_id": "uuid",
     "email": "user@example.com",
-    "role": "individual_lawyer",
+    "full_name": "Juan Perez",
+    "professional_card": "1234567",
+    "role_id": 1,
     "firm_id": null,
-    "status": "active",
+    "status": true,
     "created_at": "2026-06-17T10:00:00Z"
   }
 }
@@ -78,7 +87,9 @@ Creates a new user account.
 - Business rules:
 - Email must be unique
 - Password must meet minimum security requirements
-- Optional invite code can attach the user to a firm
+- firm_id must be null at the begining
+- `role_id` must be an integer between `1` and `3`
+- `status` uses boolean semantics: `true` = active, `false` = inactive
 
 ### `POST /auth/login`
 
@@ -106,14 +117,15 @@ Authenticates a user and creates a session.
   "user": {
     "id": "uuid",
     "email": "user@example.com",
-    "role": "individual_lawyer"
+    "role_id": 1
   }
 }
 ```
 
 - Business rules:
-- Only active users can log in
+- Only users with `status = true` can log in
 - Failed attempts should be auditable
+- `role_id` must be an integer between `1` and `3`
 
 ### `POST /auth/refresh`
 
@@ -142,6 +154,216 @@ Issues a new access token from a valid refresh token.
 - Business rules:
 - Refresh token must be valid, unexpired, and not revoked
 
+### `POST /auth/password-recovery`
+
+Starts the password recovery flow.
+
+- Auth: public
+- Purpose: generate a one-time recovery token for an existing account
+- Request body:
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+- Success response `200`:
+
+```json
+{
+  "message": "If the email exists, a password recovery token has been generated."
+}
+```
+
+- Business rules:
+- Response must be identical whether the email exists or not
+- Recovery token must expire
+- Token delivery channel can be email or another verified out-of-band mechanism
+
+### `POST /auth/password-reset`
+
+Consumes a valid recovery token and updates the password.
+
+- Auth: public
+- Purpose: complete password recovery after token validation
+- Request body:
+
+```json
+{
+  "token": "recovery-token",
+  "new_password": "StrongPassword123"
+}
+```
+
+- Success response `200`:
+
+```json
+{
+  "message": "Password updated successfully."
+}
+```
+
+- Business rules:
+- Token must be valid and unexpired
+- Token must be single-use
+- New password must meet minimum security requirements
+
+## Super ADMIN
+
+### `GET /users`
+
+Lists the users visible to the current authenticated actor.
+
+- Auth: required
+- Purpose: support user administration, assignment flows, and internal directory lookup
+- Query params:
+- `status` optional boolean
+- `role_id` optional integer between `1` and `3`
+- `firm_id` optional
+- `search` optional
+- `page` optional
+- `page_size` optional
+
+- Success response `200`:
+
+```json
+{
+  "items": [
+    {
+      "user_id": "uuid",
+      "email": "user@example.com",
+      "full_name": "Juan Perez",
+      "professional_card": "1234567",
+      "role_id": 2,
+      "firm_id": null,
+      "status": true,
+      "created_at": "2026-06-17T10:00:00Z"
+    }
+  ],
+  "page": 1,
+  "page_size": 20,
+  "total": 1
+}
+```
+
+- Business rules:
+- `password_hash` must never be returned
+- Visibility must respect tenant and firm boundaries
+- `role_id` must be an integer between `1` and `3`
+- `status` uses boolean semantics: `true` = active, `false` = inactive
+
+### `POST /users`
+
+Creates a new user.
+
+- Auth: required
+- Purpose: allow admin to create user accounts
+- Request body:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "StrongPassword123",
+  "full_name": "Juan Perez",
+  "professional_card": "1234567",
+  "role_id": 1,
+  "firm_id": null
+}
+```
+
+- Success response `201`:
+
+```json
+{
+  "user": {
+    "user_id": "uuid",
+    "email": "user@example.com",
+    "full_name": "Juan Perez",
+    "professional_card": "1234567",
+    "role_id": 2,
+    "firm_id": null,
+    "status": true,
+    "created_at": "2026-06-17T10:00:00Z"
+  }
+}
+```
+
+- Business rules:
+- Email must be unique
+- Password must meet minimum security requirements
+- `password_hash` must be stored internally and never exposed
+- `role_id` must be an integer between `1` and `3`
+- `firm_id` may be null only for standalone users or platform-defined roles
+- `status` uses boolean semantics: `true` = active, `false` = inactive
+
+### `PATCH /users/{user_id}`
+
+Updates editable fields of an existing user.
+
+- Auth: required
+- Purpose: allow profile maintenance and admin-driven user management
+- Path params:
+- `user_id` required
+- Request body:
+
+```json
+{
+  "full_name": "Juan David Perez",
+  "professional_card": "7654321",
+  "role_id": 2,
+  "firm_id": "uuid",
+  "status": true
+}
+```
+
+- Success response `200`:
+
+```json
+{
+  "user": {
+    "user_id": "uuid",
+    "email": "user@example.com",
+    "full_name": "Juan David Perez",
+    "professional_card": "7654321",
+    "role_id": 2,
+    "firm_id": "uuid",
+    "status": true,
+    "created_at": "2026-06-17T10:00:00Z"
+  }
+}
+```
+
+- Business rules:
+- Only explicitly allowed fields may be updated
+- Role, firm membership, and status changes should be restricted to authorized admins
+- `role_id` must be an integer between `1` and `3`
+- Password changes should use a dedicated auth flow, not this endpoint
+- `status` uses boolean semantics: `true` = active, `false` = inactive
+
+### `DELETE /users/{user_id}`
+
+Deactivates a user account.
+
+- Auth: required
+- Purpose: remove a user from access without losing audit history
+- Path params:
+- `user_id` required
+
+- Success response `200`:
+
+```json
+{
+  "message": "User deactivated successfully."
+}
+```
+
+- Business rules:
+- Prefer soft delete or status change over physical deletion
+- The last user with `status = true` and firm-admin privileges must not be removable if it would orphan the firm
+- Existing sessions should be revoked after deactivation
+- The action must be auditable
+
 ## Case Endpoints
 
 ### `GET /cases`
@@ -162,15 +384,18 @@ Lists the cases accessible to the current user.
 {
   "items": [
     {
-      "id": "uuid",
+      "case_id": "uuid",
       "name": "Despido Juan Perez",
+      "description": "Despido injustifiado raro por x o y motivo",
       "legal_area": "Laboral",
-      "status": "en_proceso",
+      "status": true,
       "owner": {
         "user_id": "uuid",
         "firm_id": null
       },
-      "created_at": "2026-06-17T10:00:00Z"
+      "created_at": "2026-06-17T10:00:00Z",
+      "updated_at": "2026-06-17T10:00:00Z",
+      "is_public":true
     }
   ],
   "page": 1,
@@ -182,6 +407,7 @@ Lists the cases accessible to the current user.
 - Business rules:
 - Results must include only owned or shared cases
 - Cross-tenant leakage is forbidden
+- status true = active, false = inactive
 
 ### `POST /cases`
 
@@ -195,7 +421,8 @@ Creates a new case.
 {
   "name": "Despido Juan Perez",
   "legal_area": "Laboral",
-  "description": "optional"
+  "description": "optional",
+  "is_public": true
 }
 ```
 
@@ -206,7 +433,7 @@ Creates a new case.
   "id": "uuid",
   "name": "Despido Juan Perez",
   "legal_area": "Laboral",
-  "status": "pendiente_de_analisis",
+  "status": true,
   "owner": {
     "user_id": "uuid",
     "firm_id": null
@@ -236,7 +463,7 @@ Returns detailed information for a single case.
   "id": "uuid",
   "name": "Despido Juan Perez",
   "legal_area": "Laboral",
-  "status": "en_proceso",
+  "status": true,
   "description": "optional",
   "owner": {
     "user_id": "uuid",
@@ -244,7 +471,6 @@ Returns detailed information for a single case.
   },
   "created_at": "2026-06-17T10:00:00Z",
   "updated_at": "2026-06-17T11:00:00Z",
-  "archived_at": null
 }
 ```
 
@@ -262,56 +488,16 @@ Updates editable fields of a case.
 ```json
 {
   "name": "Despido Juan Perez v2",
-  "description": "updated description"
+  "description": "updated description",
+  "legal_area": "Laboral",
+  "status": true
 }
 ```
 
 - Success response `200`: updated case object
 
 - Business rules:
-- Only owner or `read_write` shared users can update
 - Illegal state changes must return `409`
-
-### `POST /cases/{id}/archive`
-
-Archives a case without deleting its data.
-
-- Auth: required
-- Purpose: hide inactive matters while preserving history
-- Request body: empty
-- Success response `200`:
-
-```json
-{
-  "id": "uuid",
-  "status": "archivado",
-  "archived_at": "2026-06-17T12:00:00Z"
-}
-```
-
-- Business rules:
-- Archiving is reversible only if product rules allow it
-- Archived data remains queryable by authorized users
-
-### `POST /cases/{id}/close`
-
-Closes a case.
-
-- Auth: required
-- Purpose: mark the legal matter as finished
-- Request body: empty
-- Success response `200`:
-
-```json
-{
-  "id": "uuid",
-  "status": "cerrado"
-}
-```
-
-- Business rules:
-- Closing must be logged in audit history
-- Closed cases are still preserved for retrieval and evidence
 
 ## Document Endpoints
 
@@ -330,11 +516,11 @@ Uploads a document into a case.
 
 ```json
 {
-  "id": "uuid",
-  "status": "cargado",
+  "case_id": "uuid",
+  "original_filename": "Caso de una ardillita",
   "file_type": "pdf",
-  "version_count": 1,
-  "quality_score": null
+  "file_size_bytes": 30,
+  "created_at": "2026-06-17T10:00:00Z"
 }
 ```
 
@@ -393,58 +579,6 @@ Returns the detail of a document.
 - Business rules:
 - Document access inherits from case access
 
-### `GET /documents/{id}/versions`
-
-Lists all stored versions of a document.
-
-- Auth: required
-- Purpose: preserve non-destructive update history
-- Success response `200`:
-
-```json
-{
-  "items": [
-    {
-      "id": "uuid",
-      "version_number": 1,
-      "storage_key": "documents/case/doc-v1.pdf",
-      "checksum": "sha256",
-      "created_at": "2026-06-17T10:00:00Z"
-    }
-  ]
-}
-```
-
-- Business rules:
-- Version numbers must be unique per document
-
-### `POST /documents/{id}/reprocess`
-
-Reruns the processing pipeline for a document.
-
-- Auth: required
-- Purpose: recover from OCR/parser failures or apply improved extraction logic
-- Request body example:
-
-```json
-{
-  "force": true,
-  "reason": "parser update"
-}
-```
-
-- Success response `202`:
-
-```json
-{
-  "id": "uuid",
-  "status": "procesando"
-}
-```
-
-- Business rules:
-- Reprocessing must be idempotent at job level
-- Each reprocess event should be auditable
 
 ## Analysis Endpoints
 
