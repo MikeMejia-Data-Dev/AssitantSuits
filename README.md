@@ -7,6 +7,7 @@ This repository contains the implementation planning artifacts and starter struc
 - [Business Logic Source](./Logica_de_negocio_LexIA.docx)
 - [MVP Implementation Plan](./docs/mvp-implementation-plan.md)
 - [Jira Import CSV](./docs/jira-import.csv)
+- [Mini Guía Jira ES](./docs/jira-mini-guia-es.md)
 - [Team Delivery Plan](./docs/team-delivery-plan.md)
 
 ## Starter Structure
